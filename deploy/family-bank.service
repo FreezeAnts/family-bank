@@ -1,0 +1,16 @@
+[Unit]
+Description=Family Bank
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/family-bank
+EnvironmentFile=/etc/family-bank/env
+ExecStart=/usr/bin/node --experimental-sqlite /opt/family-bank/src/server.js
+Restart=on-failure
+RestartSec=3
+User=root
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
