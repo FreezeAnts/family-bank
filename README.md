@@ -15,16 +15,18 @@ A [FreezeAnts](https://www.freezeants.com/) project.
 
 ## Requirements
 
-- Node.js 22+
-- SQLite (built-in via `node:sqlite`)
-- Optional: reverse proxy / tunnel for HTTPS and Google OAuth callbacks
+- Linux host (or WSL) with **Node.js 22+**
+- SQLite (built into Node via `node:sqlite` — no separate DB server)
+- For Google sign-in: a **public HTTPS** URL (reverse proxy, Cloudflare Tunnel, Caddy, nginx, etc.)
 
-## Quick start
+## Install (local try-out)
 
 ```bash
+git clone https://github.com/FreezeAnts/family-bank.git
+cd family-bank
 cp .env.example .env
-# Set SESSION_SECRET, PARENT_EMAIL, CHILD_EMAIL
-# For local UI without Google: NODE_ENV=development DEV_AUTH_ENABLED=true
+# Edit .env: SESSION_SECRET, PARENT_EMAIL, CHILD_EMAIL
+# Optional starter login: NODE_ENV=development and DEV_AUTH_ENABLED=true
 npm install
 npm run db:migrate
 npm run db:seed
@@ -32,18 +34,106 @@ npm test
 npm run dev
 ```
 
-Open `http://127.0.0.1:3000`.
+Open `http://127.0.0.1:3000`. With `DEV_AUTH_ENABLED=true`, use the seeded emails on the login page. For real Google login, see [Google OAuth setup](#google-oauth-setup).
 
-## Production sketch
+## Install (production host)
 
-1. Copy the app to your host (for example `/opt/family-bank`).
-2. Put secrets in a root-owned env file (mode `600`), pointed at by `FAMILY_BANK_ENV`.
-3. Set `NODE_ENV=production`, `DEV_AUTH_ENABLED=false`, real Gmail allowlist emails, and Google OAuth client credentials (see below).
-4. Point `BASE_URL` at your public HTTPS origin.
-5. Install `deploy/family-bank.service`, run migrations/seed, enable the unit.
-6. Schedule `deploy/backup.sh` against `DATABASE_PATH`.
+These steps assume Linux + systemd and install under `/opt/family-bank`.
 
-See `deploy/` for the systemd unit, Caddy example, backup script, and GitHub update helper.
+### 1. Get the app
+
+**From the latest release** (recommended):
+
+```bash
+sudo mkdir -p /opt/family-bank /var/lib/family-bank /etc/family-bank
+cd /tmp
+# Pick the family-bank-*.tar.gz asset from:
+# https://github.com/FreezeAnts/family-bank/releases/latest
+gh release download -R FreezeAnts/family-bank -p 'family-bank-*.tar.gz' -O family-bank.tgz
+# or: curl -fsSL -o family-bank.tgz '<browser download URL for family-bank-x.y.z.tar.gz>'
+sudo tar -xzf family-bank.tgz -C /opt/family-bank
+```
+
+**Or from git:**
+
+```bash
+sudo git clone https://github.com/FreezeAnts/family-bank.git /opt/family-bank
+```
+
+**Or with the updater** (after the first install exists elsewhere / you have a prior copy of the script):
+
+```bash
+sudo bash deploy/update-from-github.sh
+```
+
+### 2. Install dependencies
+
+```bash
+cd /opt/family-bank
+sudo npm ci --omit=dev
+```
+
+### 3. Configure environment
+
+```bash
+sudo cp /opt/family-bank/.env.example /etc/family-bank/env
+sudo chmod 600 /etc/family-bank/env
+sudo nano /etc/family-bank/env
+```
+
+Set at least:
+
+| Variable | Example |
+| --- | --- |
+| `SESSION_SECRET` | long random string |
+| `BASE_URL` | `https://bank.example.com` (no trailing slash) |
+| `DATABASE_PATH` | `/var/lib/family-bank/family-bank.sqlite` |
+| `PARENT_EMAIL` / `CHILD_EMAIL` | family Gmail addresses for first seed |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | from Google Cloud (see below) |
+| `NODE_ENV` | `production` |
+| `DEV_AUTH_ENABLED` | `false` |
+
+The systemd unit loads `/etc/family-bank/env` automatically.
+
+### 4. Database
+
+```bash
+cd /opt/family-bank
+sudo FAMILY_BANK_ENV=/etc/family-bank/env npm run db:migrate
+sudo FAMILY_BANK_ENV=/etc/family-bank/env npm run db:seed
+```
+
+Seed creates the parent/child users only when the `users` table is empty. Add more family members later from Parent → Audit & settings.
+
+### 5. systemd service
+
+```bash
+sudo cp /opt/family-bank/deploy/family-bank.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now family-bank
+sudo systemctl status family-bank
+curl -sS http://127.0.0.1:3000/healthz
+```
+
+### 6. HTTPS in front of the app
+
+Point your public hostname at the host and reverse-proxy to `127.0.0.1:3000`. A minimal Caddy example is in [`deploy/Caddyfile`](deploy/Caddyfile). Cloudflare Tunnel also works.
+
+`BASE_URL` and the Google OAuth redirect URI must match that public HTTPS origin exactly.
+
+### 7. Backups
+
+```bash
+sudo cp /opt/family-bank/deploy/backup.sh /usr/local/bin/family-bank-backup.sh
+sudo chmod +x /usr/local/bin/family-bank-backup.sh
+# Cron example: 15 2 * * * DATABASE_PATH=/var/lib/family-bank/family-bank.sqlite /usr/local/bin/family-bank-backup.sh
+```
+
+### 8. Smoke check
+
+1. Open `https://bank.example.com`
+2. Sign in with Google as the seeded parent
+3. Confirm Parent portal loads; add more users if needed
 
 ## Google OAuth setup
 
